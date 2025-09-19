@@ -1,0 +1,19 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+    {
+      "label": "Run RoboClaw Motion Studio",
+      "type": "shell",
+      "command": "/home/ros/motion_studio_ws/venv/bin/python",
+      "args": [
+        "main.py"
+      ],
+      "group": "build",
+      "isBackground": false,
+      "problemMatcher": [],
+      "options": {
+        "cwd": "/home/ros/motion_studio_ws"
+      }
+    }
+  ]
+}
