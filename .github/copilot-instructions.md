@@ -8,7 +8,7 @@ This is a Python PyQt6 GUI application that provides a comprehensive interface f
 - `main.py` - Application entry point
 - `roboclaw_motion_studio/` - Main package directory
   - `main_window.py` - Main application window with tab management
-  - `roboclaw_linux.py` - Linux-compatible RoboClaw communication library
+  - `roboclaw_protocol.py` - Manual-compliant RoboClaw communication library
   - `device_connection_tab.py` - Device connection and communication settings
   - `motor_control_tab.py` - Real-time motor control interface
   - `pid_tuning_tab.py` - PID tuning with auto-tuning algorithms
@@ -44,3 +44,9 @@ The application implements three auto-tuning methods:
 3. **Ziegler-Nichols** - Classic method for PID parameter estimation
 
 When working on auto-tuning features, ensure thread safety and provide user feedback during the tuning process.
+
+## Protocol Compliance Notes
+- All write commands require 0xFF ACK; retries: 2 with 10ms delay.
+- CRC16 (poly 0x1021) computed over address, command, data; appended high byte first.
+- Version command handled with dual strategy (no-header-CRC compatibility + standard packet) to maximize firmware support.
+- No fallback no-CRC drive packets permitted (safety & spec compliance).

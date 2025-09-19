@@ -43,7 +43,9 @@ mkdir -p ~/.local/bin
 cat > ~/.local/bin/roboclaw-studio << 'EOF'
 #!/bin/bash
 cd /home/ros/motion_studio_ws
-python3 main.py "$@"
+# Activate virtual environment and run the application
+source venv/bin/activate
+python main.py "$@"
 EOF
 chmod +x ~/.local/bin/roboclaw-studio
 

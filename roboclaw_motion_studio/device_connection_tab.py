@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
 from PyQt6.QtCore import QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont
 
-from .roboclaw_linux import RoboClawLinux
+from .roboclaw_protocol import RoboClawProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +29,30 @@ class ConnectionWorker(QThread):
     def run(self):
         """Attempt to connect to RoboClaw device"""
         try:
-            roboclaw = RoboClawLinux(self.port)
-            if roboclaw.connect(self.baudrate):
-                # Test communication
+            roboclaw = RoboClawProtocol(self.port, self.baudrate, 0x80)
+            if roboclaw.connect():
+                # Test communication - try version first
                 version = roboclaw.get_version()
                 if version:
                     self.connection_result.emit(True, f"Connected to {version}")
                     return
-                else:
-                    roboclaw.disconnect()
-                    self.connection_result.emit(False, "Device not responding")
+                
+                # If version fails, try battery voltage (more reliable for some USB devices)
+                voltage = roboclaw.get_main_battery_voltage()
+                if voltage is not None:
+                    self.connection_result.emit(True, f"Connected to USB RoboClaw (Battery: {voltage:.1f}V)")
+                    return
+                
+                # If both fail, try motor current reading
+                currents = roboclaw.get_currents()
+                if currents is not None:
+                    current1, current2 = currents
+                    self.connection_result.emit(True, f"Connected to USB RoboClaw (Currents: {current1:.2f}A, {current2:.2f}A)")
+                    return
+                
+                # If all tests fail
+                roboclaw.disconnect()
+                self.connection_result.emit(False, "Device not responding to any commands")
             else:
                 self.connection_result.emit(False, "Failed to open serial port")
         except Exception as e:
@@ -47,13 +61,13 @@ class ConnectionWorker(QThread):
 class DeviceConnectionTab(QWidget):
     """Device connection and communication settings tab"""
     
-    device_connected = pyqtSignal(RoboClawLinux)
+    device_connected = pyqtSignal(RoboClawProtocol)
     device_disconnected = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_window = parent
-        self.roboclaw: Optional[RoboClawLinux] = None
+        self.roboclaw: Optional[RoboClawProtocol] = None
         self.connection_worker: Optional[ConnectionWorker] = None
         
         self._create_ui()
@@ -96,8 +110,17 @@ class DeviceConnectionTab(QWidget):
         ])
         self.baud_combo.setCurrentText("38400")  # Default for RoboClaw
         baud_layout.addWidget(self.baud_combo)
+        
+        # USB device indicator
+        self.usb_indicator = QLabel("")
+        self.usb_indicator.setStyleSheet("color: blue; font-weight: bold;")
+        baud_layout.addWidget(self.usb_indicator)
+        
         baud_layout.addStretch()
         connection_layout.addLayout(baud_layout)
+        
+        # Connect port combo selection change to update USB status
+        self.port_combo.currentTextChanged.connect(self._on_port_changed)
         
         # Device address
         addr_layout = QHBoxLayout()
@@ -212,6 +235,23 @@ class DeviceConnectionTab(QWidget):
         
         return ports
     
+    def _on_port_changed(self, port_name: str):
+        """Handle port selection change to update USB device information"""
+        if not port_name or port_name == "No ports available":
+            self.usb_indicator.setText("")
+            return
+        
+        if 'ttyACM' in port_name:
+            # This is likely a USB device
+            self.usb_indicator.setText("(USB Device - baud rate ignored)")
+            # Set to standard USB CDC baud rate
+            self.baud_combo.setCurrentText("115200")
+            self.baud_combo.setEnabled(False)
+        else:
+            # Regular serial device
+            self.usb_indicator.setText("")
+            self.baud_combo.setEnabled(True)
+    
     def connect_device(self):
         """Connect to RoboClaw device"""
         port = self.port_combo.currentText()
@@ -250,9 +290,8 @@ class DeviceConnectionTab(QWidget):
             port = self.port_combo.currentText()
             baudrate = int(self.baud_combo.currentText())
             
-            self.roboclaw = RoboClawLinux(port)
-            self.roboclaw.connect(baudrate)
-            self.roboclaw.address = self.address_spin.value()
+            self.roboclaw = RoboClawProtocol(port, baudrate, 0x80)
+            self.roboclaw.connect()
             
             # Update UI
             self.connect_btn.setEnabled(False)
@@ -348,6 +387,6 @@ class DeviceConnectionTab(QWidget):
         
         self.device_info_text.setPlainText("\n".join(info_lines))
     
-    def get_roboclaw(self) -> Optional[RoboClawLinux]:
+    def get_roboclaw(self) -> Optional[RoboClawProtocol]:
         """Get current RoboClaw instance"""
         return self.roboclaw

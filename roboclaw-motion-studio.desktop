@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=RoboClaw Motion Studio
 Comment=Comprehensive GUI for controlling and monitoring RoboClaw motor controllers
-Exec=python3 /home/ros/motion_studio_ws/main.py
+Exec=bash -c "cd /home/ros/motion_studio_ws && source venv/bin/activate && python main.py"
 Icon=applications-engineering
 Terminal=false
 Type=Application

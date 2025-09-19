@@ -190,7 +190,7 @@ motion_studio_ws/
 ├── roboclaw_motion_studio/         # Main package
 │   ├── __init__.py
 │   ├── main_window.py              # Main application window
-│   ├── roboclaw_linux.py           # Device communication
+│   ├── roboclaw_protocol.py        # Device communication (manual-compliant)
 │   ├── device_connection_tab.py    # Connection interface
 │   ├── motor_control_tab.py        # Motor control
 │   ├── pid_tuning_tab.py           # PID tuning with auto-tune
@@ -216,3 +216,11 @@ This project is open source. Please refer to the original RoboClaw library licen
 - Based on the original RoboClaw Arduino library
 - Uses PyQt6 for cross-platform GUI framework
 - Implements established PID tuning algorithms from control theory literature
+
+## Notes on Protocol Compliance
+
+The application uses a manual-compliant packet protocol implementation (`roboclaw_protocol.py`). All write commands require and validate the 0xFF ACK and use CRC16-IBM (poly 0x1021). Version retrieval uses a dual-strategy compatible with firmware variations. No legacy no-CRC fallbacks are used.
+
+## Connection Defaults
+
+USB CDC devices typically enumerate as `/dev/ttyACM0` and operate reliably at 115200 baud. The GUI defaults to 115200 when an ACM port is detected; for classic TTL serial adapters, you may select alternative baud rates.

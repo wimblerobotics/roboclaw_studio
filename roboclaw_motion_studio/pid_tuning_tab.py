@@ -15,7 +15,7 @@ from PyQt6.QtGui import QFont
 import numpy as np
 from scipy import signal
 
-from .roboclaw_linux import RoboClawLinux
+from .roboclaw_protocol import RoboClawProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class AutoTuneWorker(QThread):
     progress_update = pyqtSignal(int, str)  # progress, message
     tuning_complete = pyqtSignal(bool, dict)  # success, results
     
-    def __init__(self, roboclaw: RoboClawLinux, motor: int, method: str):
+    def __init__(self, roboclaw: RoboClawProtocol, motor: int, method: str):
         super().__init__()
         self.roboclaw = roboclaw
         self.motor = motor  # 1 or 2
@@ -331,7 +331,7 @@ class PIDTuningTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_window = parent
-        self.roboclaw: Optional[RoboClawLinux] = None
+        self.roboclaw: Optional[RoboClawProtocol] = None
         self.autotune_worker: Optional[AutoTuneWorker] = None
         
         self._create_ui()
@@ -518,7 +518,7 @@ class PIDTuningTab(QWidget):
         """Setup update timers"""
         pass  # No regular updates needed for PID tab
     
-    def set_roboclaw(self, roboclaw: Optional[RoboClawLinux]):
+    def set_roboclaw(self, roboclaw: Optional[RoboClawProtocol]):
         """Set RoboClaw device instance"""
         self.roboclaw = roboclaw
         

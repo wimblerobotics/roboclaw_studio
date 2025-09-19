@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
-from .roboclaw_linux import RoboClawLinux
+from .roboclaw_protocol import RoboClawProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class ConfigurationTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_window = parent
-        self.roboclaw: Optional[RoboClawLinux] = None
+        self.roboclaw: Optional[RoboClawProtocol] = None
         
         self._create_ui()
     
@@ -317,7 +317,7 @@ class ConfigurationTab(QWidget):
         layout.addStretch()
         return tab
     
-    def set_roboclaw(self, roboclaw: Optional[RoboClawLinux]):
+    def set_roboclaw(self, roboclaw: Optional[RoboClawProtocol]):
         """Set RoboClaw device instance"""
         self.roboclaw = roboclaw
         

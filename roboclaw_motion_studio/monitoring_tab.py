@@ -16,7 +16,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
 
-from .roboclaw_linux import RoboClawLinux
+from .roboclaw_protocol import RoboClawProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class MonitoringTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_window = parent
-        self.roboclaw: Optional[RoboClawLinux] = None
+        self.roboclaw: Optional[RoboClawProtocol] = None
         
         # Data storage for plotting
         self.max_data_points = 1000
@@ -282,7 +282,7 @@ class MonitoringTab(QWidget):
         self.plot_timer.timeout.connect(self._update_plots)
         self.plot_timer.start(1000)  # Update plots every second
     
-    def set_roboclaw(self, roboclaw: Optional[RoboClawLinux]):
+    def set_roboclaw(self, roboclaw: Optional[RoboClawProtocol]):
         """Set RoboClaw device instance"""
         self.roboclaw = roboclaw
         
@@ -555,3 +555,25 @@ class MonitoringTab(QWidget):
         """Public method to update monitoring data (called from main window)"""
         if self.monitoring_enabled:
             self._collect_data()
+
+    def refresh_data(self):
+        if not self.roboclaw:
+            return
+        try:
+            mbatt = self.roboclaw.read_main_battery_voltage()
+            lbatt = self.roboclaw.read_logic_battery_voltage()
+            temp = self.roboclaw.read_temperature()
+            enc1,_ = self.roboclaw.read_enc_m1()
+            enc2,_ = self.roboclaw.read_enc_m2()
+            cur1,cur2 = self.roboclaw.read_currents()
+            pwm1,pwm2 = self.roboclaw.read_pwms()
+            speed1,_ = self.roboclaw.read_speed_m1()
+            speed2,_ = self.roboclaw.read_speed_m2()
+
+            # Update status displays
+            self._update_status_displays(
+                enc1, enc2, speed1, speed2,
+                cur1, cur2, mbatt, temp
+            )
+        except Exception as e:
+            print(f"Monitor update error: {e}")

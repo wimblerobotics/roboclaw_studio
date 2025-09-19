@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QPalette
 
-from .roboclaw_linux import RoboClawLinux
+from .roboclaw_protocol import RoboClawProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class MotorControlTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_window = parent
-        self.roboclaw: Optional[RoboClawLinux] = None
+        self.roboclaw: Optional[RoboClawProtocol] = None
         
         self._create_ui()
         self._setup_timers()
@@ -223,7 +223,7 @@ class MotorControlTab(QWidget):
         self.status_timer.timeout.connect(self._update_status)
         self.status_timer.start(100)  # Update every 100ms
     
-    def set_roboclaw(self, roboclaw: Optional[RoboClawLinux]):
+    def set_roboclaw(self, roboclaw: Optional[RoboClawProtocol]):
         """Set RoboClaw device instance"""
         self.roboclaw = roboclaw
         
@@ -387,3 +387,16 @@ class MotorControlTab(QWidget):
         except Exception as e:
             # Don't log every failed status update to avoid spam
             pass
+    
+    def apply_speeds(self):
+        if not self.roboclaw:
+            return
+        m1 = int(self.m1_speed_input.text() or '0')
+        m2 = int(self.m2_speed_input.text() or '0')
+        # use speed commands (qpps) for smoother control
+        self.roboclaw.speed_m1(m1)
+        self.roboclaw.speed_m2(m2)
+    
+    def stop_motors(self):
+        if self.roboclaw:
+            self.roboclaw.stop_all()

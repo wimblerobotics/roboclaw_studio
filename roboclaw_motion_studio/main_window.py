@@ -19,7 +19,7 @@ from .motor_control_tab import MotorControlTab
 from .pid_tuning_tab import PIDTuningTab
 from .monitoring_tab import MonitoringTab
 from .configuration_tab import ConfigurationTab
-from .roboclaw_linux import RoboClawLinux
+from .roboclaw_protocol import RoboClawProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("RoboClawTools", "MotionStudio")
         
         # RoboClaw device instance
-        self.roboclaw: Optional[RoboClawLinux] = None
+        self.roboclaw: Optional[RoboClawProtocol] = None
         self.device_connected = False
         
         # Setup logging
@@ -241,10 +241,10 @@ class MainWindow(QMainWindow):
         """Handle disconnect device action"""
         self.connection_tab.disconnect_device()
     
-    def _on_device_connected(self, roboclaw: RoboClawLinux):
+    def _on_device_connected(self, roboclaw):
         """Handle device connection"""
+        # Accept protocol instance
         self.roboclaw = roboclaw
-        self.device_connected = True
         
         # Update UI
         self.connect_action.setEnabled(False)
@@ -256,7 +256,7 @@ class MainWindow(QMainWindow):
         if version:
             self.device_info_label.setText(f"RoboClaw {version}")
         
-        # Enable tabs
+        # Propagate to tabs
         self.motor_control_tab.set_roboclaw(roboclaw)
         self.pid_tuning_tab.set_roboclaw(roboclaw)
         self.monitoring_tab.set_roboclaw(roboclaw)
