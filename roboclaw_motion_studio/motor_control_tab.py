@@ -400,3 +400,19 @@ class MotorControlTab(QWidget):
     def stop_motors(self):
         if self.roboclaw:
             self.roboclaw.stop_all()
+    
+    def update_from_snapshot(self, snap: dict):
+        if not snap:
+            return
+        if 'enc1' in snap:
+            self.m1_encoder_label.setText(str(snap['enc1']))
+        if 'enc2' in snap:
+            self.m2_encoder_label.setText(str(snap['enc2']))
+        if 'speed1' in snap:
+            self.m1_speed_label.setText(str(snap['speed1']))
+        if 'speed2' in snap:
+            self.m2_speed_label.setText(str(snap['speed2']))
+        if 'current1' in snap:
+            self.m1_current_label.setText(f"{snap['current1']:.2f}A")
+        if 'current2' in snap:
+            self.m2_current_label.setText(f"{snap['current2']:.2f}A")

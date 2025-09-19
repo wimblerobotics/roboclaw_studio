@@ -21,6 +21,9 @@ from .monitoring_tab import MonitoringTab
 from .configuration_tab import ConfigurationTab
 from .roboclaw_protocol import RoboClawProtocol
 
+import threading, queue, time
+from logging.handlers import RotatingFileHandler
+
 logger = logging.getLogger(__name__)
 
 class MainWindow(QMainWindow):
@@ -38,6 +41,11 @@ class MainWindow(QMainWindow):
         self.roboclaw: Optional[RoboClawProtocol] = None
         self.device_connected = False
         
+        # Snapshot thread
+        self._snapshot_thread = None
+        self._snapshot_stop = threading.Event()
+        self._snapshot_interval = 0.1  # 10 Hz
+        
         # Setup logging
         self._setup_logging()
         
@@ -45,6 +53,7 @@ class MainWindow(QMainWindow):
         self._create_menus()
         self._create_status_bar()
         self._create_central_widget()
+        self._create_toolbar()
         
         # Setup timers
         self._setup_timers()
@@ -60,14 +69,16 @@ class MainWindow(QMainWindow):
         if self.settings.value("debug_mode", False, type=bool):
             log_level = logging.DEBUG
         
-        logging.basicConfig(
-            level=log_level,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.StreamHandler(),
-                logging.FileHandler('roboclaw_motion_studio.log')
-            ]
-        )
+        for h in list(logging.getLogger().handlers):
+            logging.getLogger().removeHandler(h)
+        log_file = 'roboclaw_motion_studio.log'
+        rotating = RotatingFileHandler(log_file, maxBytes=512000, backupCount=3)
+        rotating.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
+        stream = logging.StreamHandler()
+        stream.setFormatter(logging.Formatter('%(levelname)s %(name)s: %(message)s'))
+        logging.getLogger().addHandler(rotating)
+        logging.getLogger().addHandler(stream)
+        logging.getLogger().setLevel(log_level)
     
     def _create_menus(self):
         """Create application menus"""
@@ -194,6 +205,73 @@ class MainWindow(QMainWindow):
         self.connection_tab.device_connected.connect(self._on_device_connected)
         self.connection_tab.device_disconnected.connect(self._on_device_disconnected)
     
+    def _create_toolbar(self):
+        """Create application toolbar"""
+        tb = self.addToolBar('Main')
+        tb.setMovable(False)
+        
+        # Connect action
+        self.action_connect = QAction(QIcon.fromTheme('network-connect'), 'Connect', self)
+        self.action_connect.triggered.connect(self._on_connect_device)
+        tb.addAction(self.action_connect)
+        
+        # Disconnect action
+        self.action_disconnect = QAction(QIcon.fromTheme('network-disconnect'), 'Disconnect', self)
+        self.action_disconnect.triggered.connect(self._on_disconnect_device)
+        self.action_disconnect.setEnabled(False)
+        tb.addAction(self.action_disconnect)
+        
+        tb.addSeparator()
+        
+        # Monitoring actions
+        self.action_monitor_start = QAction('Start Monitoring', self)
+        self.action_monitor_start.triggered.connect(lambda: self._set_monitoring(True))
+        tb.addAction(self.action_monitor_start)
+        
+        self.action_monitor_stop = QAction('Stop Monitoring', self)
+        self.action_monitor_stop.triggered.connect(lambda: self._set_monitoring(False))
+        tb.addAction(self.action_monitor_stop)
+        
+        tb.addSeparator()
+        
+        # Emergency stop
+        self.action_emergency = QAction(QIcon.fromTheme('process-stop'), 'Emergency Stop', self)
+        self.action_emergency.triggered.connect(self._on_emergency_stop)
+        tb.addAction(self.action_emergency)
+        
+        tb.addSeparator()
+        
+        # Theme toggle
+        self.action_theme = QAction('Toggle Theme', self)
+        self.action_theme.setCheckable(True)
+        self.action_theme.triggered.connect(self._toggle_theme)
+        tb.addAction(self.action_theme)
+    
+    def _toggle_theme(self):
+        """Toggle between light and dark theme"""
+        dark = self.action_theme.isChecked()
+        if dark:
+            self.settings.setValue('theme', 'dark')
+            self._apply_theme('dark')
+        else:
+            self.settings.setValue('theme', 'light')
+            self._apply_theme('light')
+    
+    def _apply_theme(self, theme: str):
+        """Apply the selected theme"""
+        if theme == 'dark':
+            self.setStyleSheet("""
+                QWidget { background-color:#232629; color:#ddd; }
+                QGroupBox { border:1px solid #444; margin-top:6px; }
+                QGroupBox::title { subcontrol-origin: margin; left:8px; padding:0 4px; }
+                QPushButton { background:#444; border:1px solid #555; padding:4px; }
+                QPushButton:hover { background:#555; }
+                QTabBar::tab:selected { background:#444; }
+                QStatusBar { background:#1e1e1e; }
+            """)
+        else:
+            self.setStyleSheet("")
+    
     def _setup_timers(self):
         """Setup update timers"""
         # Status update timer
@@ -217,6 +295,11 @@ class MainWindow(QMainWindow):
         state = self.settings.value("windowState")
         if state:
             self.restoreState(state)
+        
+        # Theme
+        theme = self.settings.value('theme','light')
+        self.action_theme.setChecked(theme=='dark')
+        self._apply_theme(theme)
     
     def _save_settings(self):
         """Save application settings"""
@@ -226,6 +309,8 @@ class MainWindow(QMainWindow):
     
     def closeEvent(self, event):
         """Handle application close event"""
+        self._stop_snapshot_thread()
+        
         if self.device_connected:
             self._on_disconnect_device()
         
@@ -249,6 +334,8 @@ class MainWindow(QMainWindow):
         # Update UI
         self.connect_action.setEnabled(False)
         self.disconnect_action.setEnabled(True)
+        self.action_connect.setEnabled(False)
+        self.action_disconnect.setEnabled(True)
         self.connection_status_label.setText("Connected")
         
         # Get device info
@@ -262,6 +349,8 @@ class MainWindow(QMainWindow):
         self.monitoring_tab.set_roboclaw(roboclaw)
         self.configuration_tab.set_roboclaw(roboclaw)
         
+        self._start_snapshot_thread()
+        
         logger.info(f"Device connected: {version}")
     
     def _on_device_disconnected(self):
@@ -272,6 +361,8 @@ class MainWindow(QMainWindow):
         # Update UI
         self.connect_action.setEnabled(True)
         self.disconnect_action.setEnabled(False)
+        self.action_connect.setEnabled(True)
+        self.action_disconnect.setEnabled(False)
         self.connection_status_label.setText("Disconnected")
         self.device_info_label.setText("")
         
@@ -280,6 +371,8 @@ class MainWindow(QMainWindow):
         self.pid_tuning_tab.set_roboclaw(None)
         self.monitoring_tab.set_roboclaw(None)
         self.configuration_tab.set_roboclaw(None)
+        
+        self._stop_snapshot_thread()
         
         logger.info("Device disconnected")
     
@@ -427,3 +520,47 @@ class MainWindow(QMainWindow):
         """Hide progress bar"""
         self.progress_bar.setVisible(False)
         self.status_bar.clearMessage()
+    
+    def _start_snapshot_thread(self):
+        """Start the snapshot polling thread"""
+        if self._snapshot_thread and self._snapshot_thread.is_alive():
+            return
+        self._snapshot_stop.clear()
+        def run():
+            while not self._snapshot_stop.is_set():
+                if self.roboclaw:
+                    snap = self.roboclaw.snapshot()
+                    self._dispatch_snapshot(snap)
+                time.sleep(self._snapshot_interval)
+        self._snapshot_thread = threading.Thread(target=run, daemon=True)
+        self._snapshot_thread.start()
+    
+    def _stop_snapshot_thread(self):
+        """Stop the snapshot polling thread"""
+        if self._snapshot_thread:
+            self._snapshot_stop.set()
+            self._snapshot_thread.join(timeout=1.0)
+            self._snapshot_thread = None
+    
+    def _dispatch_snapshot(self, snap: dict):
+        """Dispatch snapshot data to update methods"""
+        # invoked from thread; use singleShot to update UI in main thread
+        QTimer.singleShot(0, lambda s=snap: self._apply_snapshot(s))
+    
+    def _apply_snapshot(self, snap: dict):
+        """Apply the snapshot data to update UI components"""
+        try:
+            self.monitoring_tab.update_from_snapshot(snap)
+            self.motor_control_tab.update_from_snapshot(snap)
+            # status bar quick info
+            if 'mbatt' in snap and 'temp' in snap:
+                self.connection_status_label.setText(f"V:{snap.get('mbatt',0):.1f} Temp:{snap.get('temp',0):.1f}C Errors:{','.join(snap.get('error_list', []))}")
+        except Exception:
+            pass
+    
+    def _set_monitoring(self, enable: bool):
+        """Enable or disable external monitoring updates"""
+        if enable:
+            self.monitoring_tab.enable_external()
+        else:
+            self.monitoring_tab.disable_external()

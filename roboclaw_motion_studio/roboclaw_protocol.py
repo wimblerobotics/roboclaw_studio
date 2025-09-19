@@ -105,6 +105,8 @@ class RoboClawProtocol:
         self._crc = 0
         self.ack_timeout = 0.2  # extend to 200ms
         self.stop_pacing = 0.005  # 5ms between stop packets
+        self._last_activity = time.monotonic()
+        self.watchdog_enabled = True
 
     # --- CRC ---
     def _crc_clear(self):
@@ -230,23 +232,29 @@ class RoboClawProtocol:
     def forward_m1(self, speed: int):
         speed = max(0, min(127, speed))
         self._write_retry(self.address, CMD.M1FORWARD, speed)
+        self._touch()
     def backward_m1(self, speed: int):
         speed = max(0, min(127, speed))
         self._write_retry(self.address, CMD.M1BACKWARD, speed)
+        self._touch()
     def forward_m2(self, speed: int):
         speed = max(0, min(127, speed))
         self._write_retry(self.address, CMD.M2FORWARD, speed)
+        self._touch()
     def backward_m2(self, speed: int):
         speed = max(0, min(127, speed))
         self._write_retry(self.address, CMD.M2BACKWARD, speed)
+        self._touch()
     def duty_m1(self, duty_signed_percent: float):
         p = max(-100.0, min(100.0, duty_signed_percent))
         raw = int(p / 100.0 * 32767) & 0xFFFF
         self._write_retry(self.address, CMD.M1DUTY, (raw >> 8) & 0xFF, raw & 0xFF)
+        self._touch()
     def duty_m2(self, duty_signed_percent: float):
         p = max(-100.0, min(100.0, duty_signed_percent))
         raw = int(p / 100.0 * 32767) & 0xFFFF
         self._write_retry(self.address, CMD.M2DUTY, (raw >> 8) & 0xFF, raw & 0xFF)
+        self._touch()
     def set_velocity_pid_m1(self, kp: float, ki: float, kd: float, qpps: int):
         kd_raw = int(kd * 65536)
         kp_raw = int(kp * 65536)
@@ -369,25 +377,133 @@ class RoboClawProtocol:
             except Exception as e:
                 log.warning("Stop step %s failed: %s", fn.__name__, e)
             time.sleep(self.stop_pacing)
+        self._touch()
     def speed_m1(self, qpps: int):
         # Signed 32-bit value
         val = int(qpps) & 0xFFFFFFFF
         pkt = [(val >> 24) & 0xFF, (val >> 16) & 0xFF, (val >> 8) & 0xFF, val & 0xFF]
         self._write_retry(self.address, CMD.M1SPEED, *pkt)
+        self._touch()
     def speed_m2(self, qpps: int):
         val = int(qpps) & 0xFFFFFFFF
         pkt = [(val >> 24) & 0xFF, (val >> 16) & 0xFF, (val >> 8) & 0xFF, val & 0xFF]
         self._write_retry(self.address, CMD.M2SPEED, *pkt)
-    def read_speed_m1(self):
-        data = self._read_command(CMD.GETM1SPEED, 5)
-        return struct.unpack('>I', data[:4])[0], data[4]
-    def read_speed_m2(self):
-        data = self._read_command(CMD.GETM2SPEED, 5)
-        return struct.unpack('>I', data[:4])[0], data[4]
-    def read_pwms(self):
-        data = self._read_command(CMD.GETPWMS, 4)
-        return struct.unpack('>hh', data)
-
-__all__ = [
-    'RoboClawProtocol','RoboClawError','AckError','CrcError','TimeoutError','CMD'
-]
+        self._touch()
+    def speed_accel_m1(self, accel: int, speed: int):
+        accel &= 0xFFFFFFFF; speed &= 0xFFFFFFFF
+        pkt = [(accel>>24)&0xFF,(accel>>16)&0xFF,(accel>>8)&0xFF,accel&0xFF,(speed>>24)&0xFF,(speed>>16)&0xFF,(speed>>8)&0xFF,speed&0xFF]
+        self._write_retry(self.address, CMD.M1SPEEDACCEL, *pkt)
+        self._touch()
+    def speed_accel_m2(self, accel: int, speed: int):
+        accel &= 0xFFFFFFFF; speed &= 0xFFFFFFFF
+        pkt = [(accel>>24)&0xFF,(accel>>16)&0xFF,(accel>>8)&0xFF,accel&0xFF,(speed>>24)&0xFF,(speed>>16)&0xFF,(speed>>8)&0xFF,speed&0xFF]
+        self._write_retry(self.address, CMD.M2SPEEDACCEL, *pkt)
+        self._touch()
+    def speed_accel_distance_m1(self, accel: int, speed: int, distance: int, buffer: int = 1):
+        accel &= 0xFFFFFFFF; speed &= 0xFFFFFFFF; distance &= 0xFFFFFFFF; buffer &= 0x01
+        pkt = [
+            (accel>>24)&0xFF,(accel>>16)&0xFF,(accel>>8)&0xFF,accel&0xFF,
+            (speed>>24)&0xFF,(speed>>16)&0xFF,(speed>>8)&0xFF,speed&0xFF,
+            (distance>>24)&0xFF,(distance>>16)&0xFF,(distance>>8)&0xFF,distance&0xFF, buffer & 0x01]
+        self._write_retry(self.address, CMD.M1SPEEDACCELDIST, *pkt)
+        self._touch()
+    def speed_accel_distance_m2(self, accel: int, speed: int, distance: int, buffer: int = 1):
+        accel &= 0xFFFFFFFF; speed &= 0xFFFFFFFF; distance &= 0xFFFFFFFF; buffer &= 0x01
+        pkt = [
+            (accel>>24)&0xFF,(accel>>16)&0xFF,(accel>>8)&0xFF,accel&0xFF,
+            (speed>>24)&0xFF,(speed>>16)&0xFF,(speed>>8)&0xFF,speed&0xFF,
+            (distance>>24)&0xFF,(distance>>16)&0xFF,(distance>>8)&0xFF,distance&0xFF, buffer & 0x01]
+        self._write_retry(self.address, CMD.M2SPEEDACCELDIST, *pkt)
+        self._touch()
+    def set_position_pid_m1(self, kp: float, ki: float, kd: float, ilimit: int, deadzone: int, min_pos: int, max_pos: int):
+        # position PID scaling per manual: kp, ki, kd -> value*1024
+        vals = [int(kd*1024), int(kp*1024), int(ki*1024), ilimit, deadzone, min_pos, max_pos]
+        pkt = struct.pack('>IIIIIII', *[v & 0xFFFFFFFF for v in vals])
+        self._write_retry(self.address, CMD.SETM1POSPID, *pkt)
+    def set_position_pid_m2(self, kp: float, ki: float, kd: float, ilimit: int, deadzone: int, min_pos: int, max_pos: int):
+        vals = [int(kd*1024), int(kp*1024), int(ki*1024), ilimit, deadzone, min_pos, max_pos]
+        pkt = struct.pack('>IIIIIII', *[v & 0xFFFFFFFF for v in vals])
+        self._write_retry(self.address, CMD.SETM2POSPID, *pkt)
+    def read_position_pid_m1(self):
+        data = self._read_command(CMD.READM1POSPID, 28)
+        kd_raw,kp_raw,ki_raw,ilim,dead,imin,imax = struct.unpack('>IIIIIII', data)
+        return kp_raw/1024.0, ki_raw/1024.0, kd_raw/1024.0, ilim, dead, imin, imax
+    def read_position_pid_m2(self):
+        data = self._read_command(CMD.READM2POSPID, 28)
+        kd_raw,kp_raw,ki_raw,ilim,dead,imin,imax = struct.unpack('>IIIIIII', data)
+        return kp_raw/1024.0, ki_raw/1024.0, kd_raw/1024.0, ilim, dead, imin, imax
+    def set_main_voltage_limits(self, min_v: float, max_v: float):
+        # volts -> tenths
+        mn = int(min_v*10)&0xFFFF; mx=int(max_v*10)&0xFFFF
+        self._write_retry(self.address, CMD.SETMAINVOLTAGES, (mn>>8)&0xFF,mn&0xFF,(mx>>8)&0xFF,mx&0xFF)
+    def set_logic_voltage_limits(self, min_v: float, max_v: float):
+        mn = int(min_v*10)&0xFFFF; mx=int(max_v*10)&0xFFFF
+        self._write_retry(self.address, CMD.SETLOGICVOLTAGES, (mn>>8)&0xFF,mn&0xFF,(mx>>8)&0xFF,mx&0xFF)
+    # Error decoding
+    _ERROR_BITS = {
+        0: 'E_STOP',
+        1: 'TEMPERATURE',
+        2: 'MAIN_BATTERY_HIGH',
+        3: 'MAIN_BATTERY_LOW',
+        4: 'LOGIC_BATTERY_HIGH',
+        5: 'LOGIC_BATTERY_LOW',
+        6: 'MOTOR1_DRIVE',
+        7: 'MOTOR2_DRIVE',
+        8: 'MOTOR1_OVERCURRENT',
+        9: 'MOTOR2_OVERCURRENT'
+    }
+    def decode_errors(self, mask: int):
+        return [name for bit,name in self._ERROR_BITS.items() if mask & (1<<bit)] or ['NONE']
+    def snapshot(self) -> dict:
+        """Batch read frequently displayed values (non-atomic)."""
+        snap = {}
+        try:
+            m1e,_ = self.read_enc_m1(); m2e,_ = self.read_enc_m2()
+            snap['enc1']=m1e; snap['enc2']=m2e
+            m1s,_ = self.read_speed_m1(); m2s,_ = self.read_speed_m2()
+            snap['speed1']=m1s; snap['speed2']=m2s
+            c1,c2 = self.read_currents(); snap['current1']=c1; snap['current2']=c2
+            snap['mbatt']=self.read_main_battery_voltage(); snap['lbatt']=self.read_logic_battery_voltage()
+            snap['temp']=self.read_temperature()
+            snap['errors']=self.read_error_status(); snap['error_list']=self.decode_errors(snap['errors'])
+        except Exception as e:
+            snap['snapshot_error']=str(e)
+        return snap
+    # Legacy compatibility wrappers
+    def get_version(self):
+        try: return self.read_version()
+        except Exception: return None
+    def get_main_battery_voltage(self):
+        try: return self.read_main_battery_voltage()
+        except Exception: return None
+    def get_logic_battery_voltage(self):
+        try: return self.read_logic_battery_voltage()
+        except Exception: return None
+    def get_temperature(self):
+        try: return self.read_temperature()
+        except Exception: return None
+    def get_encoder_m1(self):
+        try: return self.read_enc_m1()
+        except Exception: return None
+    def get_encoder_m2(self):
+        try: return self.read_enc_m2()
+        except Exception: return None
+    def get_speed_m1(self):
+        try: return self.read_speed_m1()
+        except Exception: return None
+    def get_speed_m2(self):
+        try: return self.read_speed_m2()
+        except Exception: return None
+    def get_currents(self):
+        try: return self.read_currents()
+        except Exception: return None
+    def get_error_status(self):
+        try: return self.read_error_status()
+        except Exception: return None
+    def reset_encoders(self):
+        try: super().reset_encoders()  # type: ignore
+        except Exception: return False
+        return True
+    def stop_motors(self):
+        try: self.stop_all(); return True
+        except Exception: return False

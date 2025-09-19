@@ -577,3 +577,39 @@ class MonitoringTab(QWidget):
             )
         except Exception as e:
             print(f"Monitor update error: {e}")
+    
+    def update_from_snapshot(self, snap: dict):
+        if not self.monitoring_enabled:
+            return
+        t = time.time() - self.start_time
+        self.time_data.append(t)
+        self.m1_encoder_data.append(snap.get('enc1',0))
+        self.m2_encoder_data.append(snap.get('enc2',0))
+        self.m1_speed_data.append(snap.get('speed1',0))
+        self.m2_speed_data.append(snap.get('speed2',0))
+        self.m1_current_data.append(snap.get('current1',0.0))
+        self.m2_current_data.append(snap.get('current2',0.0))
+        self.voltage_data.append(snap.get('mbatt',0.0))
+        self.temperature_data.append(snap.get('temp',0.0))
+        self.samples_count_label.setText(str(len(self.time_data)))
+        # Update status widgets
+        self.m1_encoder_status.setText(str(snap.get('enc1',0)))
+        self.m2_encoder_status.setText(str(snap.get('enc2',0)))
+        self.m1_speed_status.setText(str(snap.get('speed1',0)))
+        self.m2_speed_status.setText(str(snap.get('speed2',0)))
+        self.m1_current_status.setText(f"{snap.get('current1',0.0):.2f}")
+        self.m2_current_status.setText(f"{snap.get('current2',0.0):.2f}")
+        self.main_voltage_status.setText(f"{snap.get('mbatt',0.0):.2f}")
+        self.logic_voltage_status.setText(f"{snap.get('lbatt',0.0):.2f}")
+        self.temperature_status.setText(f"{snap.get('temp',0.0):.1f}")
+        self.error_status.setText(','.join(snap.get('error_list',['NONE'])))
+    
+    def enable_external(self):
+        if not self.monitoring_enabled:
+            self.enable_monitoring_cb.setChecked(True)
+            self._on_monitoring_toggled()
+    
+    def disable_external(self):
+        if self.monitoring_enabled:
+            self.enable_monitoring_cb.setChecked(False)
+            self._on_monitoring_toggled()
