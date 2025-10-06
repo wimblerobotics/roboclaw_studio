@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
                             QCheckBox, QProgressBar, QFrame)
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QPalette
+import time
 
 from .roboclaw_protocol import RoboClawProtocol
 
@@ -66,6 +67,7 @@ class MotorControlTab(QWidget):
         self.m1_speed_slider.setRange(-127, 127)
         self.m1_speed_slider.setValue(0)
         self.m1_speed_slider.valueChanged.connect(self._on_m1_speed_changed)
+        self.m1_speed_slider.sliderReleased.connect(self._on_m1_slider_released)
         self.m1_speed_slider.setEnabled(False)
         m1_speed_layout.addWidget(self.m1_speed_slider)
         
@@ -128,6 +130,7 @@ class MotorControlTab(QWidget):
         self.m2_speed_slider.setRange(-127, 127)
         self.m2_speed_slider.setValue(0)
         self.m2_speed_slider.valueChanged.connect(self._on_m2_speed_changed)
+        self.m2_speed_slider.sliderReleased.connect(self._on_m2_slider_released)
         self.m2_speed_slider.setEnabled(False)
         m2_speed_layout.addWidget(self.m2_speed_slider)
         
@@ -236,6 +239,8 @@ class MotorControlTab(QWidget):
             self._on_motors_toggled()
     
     def _on_motors_toggled(self):
+        t = time.monotonic()
+        logger.info(f"UI EVENT enable_motors state={self.enable_checkbox.isChecked()} t={t:.6f}")
         """Handle motors enable/disable toggle"""
         self.motors_enabled = self.enable_checkbox.isChecked()
         
@@ -281,68 +286,83 @@ class MotorControlTab(QWidget):
             logger.warning("Emergency stop activated")
     
     def _on_m1_speed_changed(self, value: int):
-        """Handle M1 speed slider change"""
+        """Handle M1 speed slider change - only update spinbox, don't send command"""
         self.m1_speed_spinbox.setValue(value)
-        self._set_m1_speed(value)
+        # Don't send command until slider is released or button pressed
     
     def _on_m1_speed_spinbox_changed(self, value: int):
-        """Handle M1 speed spinbox change"""
+        """Handle M1 speed spinbox change - only update slider, don't send command"""
         self.m1_speed_slider.setValue(value)
-        self._set_m1_speed(value)
+        # Don't send command until slider is released or button pressed
     
     def _on_m2_speed_changed(self, value: int):
-        """Handle M2 speed slider change"""
+        """Handle M2 speed slider change - only update spinbox, don't send command"""
         self.m2_speed_spinbox.setValue(value)
-        self._set_m2_speed(value)
+        # Don't send command until slider is released or button pressed
     
     def _on_m2_speed_spinbox_changed(self, value: int):
-        """Handle M2 speed spinbox change"""
+        """Handle M2 speed spinbox change - only update slider, don't send command"""
         self.m2_speed_slider.setValue(value)
-        self._set_m2_speed(value)
+        # Don't send command until slider is released or button pressed
+    
+    def _on_m1_slider_released(self):
+        val = self.m1_speed_slider.value()
+        logger.debug(f"UI: M1 slider released value={val}")
+        self._set_m1_speed(val)
+    def _on_m2_slider_released(self):
+        val = self.m2_speed_slider.value()
+        logger.debug(f"UI: M2 slider released value={val}")
+        self._set_m2_speed(val)
+    
+    def _log_errors(self, context: str):
+        if not self.roboclaw:
+            return
+        try:
+            err = self.roboclaw.get_error_status()
+            if err is not None:
+                decoded = self.roboclaw.decode_errors(err)
+                logger.debug(f"Errors {context}: 0x{err:08X} {'|'.join(decoded)}")
+        except Exception as e:
+            logger.debug(f"Error read failed {context}: {e}")
     
     def _set_m1_speed(self, speed: int):
-        """Set Motor 1 speed"""
         if not self.motors_enabled or not self.roboclaw:
             return
-        
+        start = time.monotonic()
+        logger.info(f"ACTION m1_command_start speed={speed} t={start:.6f}")
         self.motor1_speed = speed
-        
         try:
             if speed >= 0:
                 self.roboclaw.forward_m1(speed)
             else:
                 self.roboclaw.backward_m1(abs(speed))
-            
-            # Update UI if not already set
-            if self.m1_speed_slider.value() != speed:
-                self.m1_speed_slider.setValue(speed)
-            if self.m1_speed_spinbox.value() != speed:
-                self.m1_speed_spinbox.setValue(speed)
-                
+            end = time.monotonic()
+            stats = self.roboclaw.get_stats()
+            logger.info(f"ACTION m1_command_end speed={speed} dur_ms={(end-start)*1000:.2f} stats={stats}")
         except Exception as e:
-            logger.error(f"Failed to set M1 speed: {e}")
+            end = time.monotonic()
+            logger.error(f"ACTION m1_command_error speed={speed} dur_ms={(end-start)*1000:.2f} error={e}")
+        if self.m1_speed_spinbox.value() != speed:
+            self.m1_speed_spinbox.setValue(speed)
     
     def _set_m2_speed(self, speed: int):
-        """Set Motor 2 speed"""
         if not self.motors_enabled or not self.roboclaw:
             return
-        
+        start = time.monotonic()
+        logger.info(f"ACTION m2_command_start speed={speed} t={start:.6f}")
         self.motor2_speed = speed
-        
         try:
-            if speed >= 0:
-                self.roboclaw.forward_m2(speed)
-            else:
-                self.roboclaw.backward_m2(abs(speed))
-            
-            # Update UI if not already set
-            if self.m2_speed_slider.value() != speed:
-                self.m2_speed_slider.setValue(speed)
-            if self.m2_speed_spinbox.value() != speed:
-                self.m2_speed_spinbox.setValue(speed)
-                
+            # Convert speed (-127 to 127) to duty cycle percentage (-100% to 100%)
+            duty_percentage = (speed / 127.0) * 100.0
+            self.roboclaw.duty_m2(duty_percentage)
+            end = time.monotonic()
+            stats = self.roboclaw.get_stats()
+            logger.info(f"ACTION m2_command_end speed={speed} duty={duty_percentage:.1f}% dur_ms={(end-start)*1000:.2f} stats={stats}")
         except Exception as e:
-            logger.error(f"Failed to set M2 speed: {e}")
+            end = time.monotonic()
+            logger.error(f"ACTION m2_command_error speed={speed} dur_ms={(end-start)*1000:.2f} error={e}")
+        if self.m2_speed_spinbox.value() != speed:
+            self.m2_speed_spinbox.setValue(speed)
     
     def _set_tank_drive(self, speed1: int, speed2: int):
         """Set tank drive speeds for both motors"""

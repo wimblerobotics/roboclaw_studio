@@ -341,6 +341,18 @@ class ConfigurationTab(QWidget):
             self.status_text.append("Reading configuration from device...")
             
             # Read voltage settings
+            main_limits = self.roboclaw.get_min_max_main_voltages()
+            if main_limits:
+                self.main_min_voltage_spin.setValue(main_limits[0])
+                self.main_max_voltage_spin.setValue(main_limits[1])
+                self.status_text.append(f"Main Voltage Limits: Min={main_limits[0]}V, Max={main_limits[1]}V")
+
+            logic_limits = self.roboclaw.get_min_max_logic_voltages()
+            if logic_limits:
+                self.logic_min_voltage_spin.setValue(logic_limits[0])
+                self.logic_max_voltage_spin.setValue(logic_limits[1])
+                self.status_text.append(f"Logic Voltage Limits: Min={logic_limits[0]}V, Max={logic_limits[1]}V")
+
             main_voltage = self.roboclaw.get_main_battery_voltage()
             if main_voltage:
                 self.main_current_voltage_label.setText(f"{main_voltage:.1f} V")
@@ -384,18 +396,25 @@ class ConfigurationTab(QWidget):
         try:
             self.status_text.append("Writing configuration to device...")
             
-            # Write voltage settings (if supported by device)
+            # Write voltage settings
             main_min = self.main_min_voltage_spin.value()
             main_max = self.main_max_voltage_spin.value()
+            self.roboclaw.set_main_voltage_limits(main_min, main_max)
+            self.status_text.append(f"Wrote Main Voltage Limits: Min={main_min}V, Max={main_max}V")
+
             logic_min = self.logic_min_voltage_spin.value()
             logic_max = self.logic_max_voltage_spin.value()
+            self.roboclaw.set_logic_voltage_limits(logic_min, logic_max)
+            self.status_text.append(f"Wrote Logic Voltage Limits: Min={logic_min}V, Max={logic_max}V")
             
-            # Note: Actual implementation would depend on specific RoboClaw commands
-            # Some settings may require specific firmware versions or models
+            # Note: Other settings would be written here
             
-            self.status_text.append("Configuration written successfully")
-            QMessageBox.information(self, "Success", "Configuration written to device")
+            self.status_text.append("Configuration written successfully. Re-reading to verify.")
+            QMessageBox.information(self, "Success", "Configuration written to device. Please save to NVM to make it permanent.")
             logger.info("Device configuration written successfully")
+
+            # Re-read to confirm
+            self._read_device_config()
             
         except Exception as e:
             self.status_text.append(f"Error writing configuration: {e}")
